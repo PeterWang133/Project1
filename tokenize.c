@@ -3,73 +3,103 @@
 #include <string.h>
 #include <ctype.h>
 
-#define MAX_INPUT_SIZE 256
+#define INITIAL_TOKEN_SIZE 64
+#define INITIAL_INPUT_SIZE 256
 
-// Function to tokenize input string
+char** allocate_tokens(int size) {
+    return (char **)malloc(size * sizeof(char *));
+}
+
+
+char** resize_tokens(char** tokens, int *size) {
+    *size *= 2;  // Double the current size
+    return (char **)realloc(tokens, (*size) * sizeof(char *));
+}
+
+// Tokenizer function
 char** tokenize(char* input) {
-    char** tokens = malloc(MAX_INPUT_SIZE * sizeof(char*));
+    int token_size = INITIAL_TOKEN_SIZE;
+    char** tokens = allocate_tokens(token_size);
     int token_count = 0;
-    char buffer[MAX_INPUT_SIZE];
-    int buffer_index = 0;
+    
     int in_quotes = 0;
+    char buffer[INITIAL_INPUT_SIZE];
+    int buffer_index = 0;
     
     for (int i = 0; input[i] != '\0'; i++) {
         char c = input[i];
-        
-        // Handle quoted strings
+      
         if (c == '"') {
             in_quotes = !in_quotes;
             if (!in_quotes) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
+                
+                if (token_count >= token_size) {
+                    tokens = resize_tokens(tokens, &token_size);
+                }
             }
             continue;
         }
         
-        // If inside quotes, add everything to the buffer
+        
         if (in_quotes) {
             buffer[buffer_index++] = c;
             continue;
         }
         
-        // Handle special tokens
+        
         if (strchr("()<>|;", c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
+                
+                if (token_count >= token_size) {
+                    tokens = resize_tokens(tokens, &token_size);
+                }
             }
             char special_token[2] = {c, '\0'};
             tokens[token_count++] = strdup(special_token);
+            
+            if (token_count >= token_size) {
+                tokens = resize_tokens(tokens, &token_size);
+            }
             continue;
         }
         
-        // Handle whitespace
+        
         if (isspace(c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
+                // Resize if token array is full
+                if (token_count >= token_size) {
+                    tokens = resize_tokens(tokens, &token_size);
+                }
             }
             continue;
         }
         
-        // Accumulate normal characters into the buffer
+        
         buffer[buffer_index++] = c;
     }
     
-    // Add any remaining buffer content as the last token
+    
     if (buffer_index > 0) {
         buffer[buffer_index] = '\0';
         tokens[token_count++] = strdup(buffer);
+        if (token_count >= token_size) {
+            tokens = resize_tokens(tokens, &token_size);
+        }
     }
     
-    tokens[token_count] = NULL; // Null-terminate the list of tokens
+    tokens[token_count] = NULL; 
     return tokens;
 }
 
-// Updated main function to handle command-line arguments
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <input_string>\n", argv[0]);
@@ -78,15 +108,14 @@ int main(int argc, char **argv) {
 
     char *input = argv[1];
 
-    // Tokenize the input string
     char **tokens = tokenize(input);
 
-    // Print out each token
+    // free memory space after printing out the tokens
     for (int i = 0; tokens[i] != NULL; i++) {
         printf("%s\n", tokens[i]);
-        free(tokens[i]); // Free allocated memory for each token
+        free(tokens[i]);
     }
 
-    free(tokens); // Free the token array
+    free(tokens);
     return 0;
 }
