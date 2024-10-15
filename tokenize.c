@@ -2,9 +2,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
+
+// strdup function implementation
+char* strdup(const char* str) {
+    size_t len = strlen(str) + 1;
+    char* copy = malloc(len);
+    if (copy) {
+        memcpy(copy, str, len);
+    }
+    return copy;
+}
 
 char** allocate_tokens(int size) {
     return (char **)malloc(size * sizeof(char *));
@@ -42,12 +54,10 @@ char** tokenize(char* input) {
             continue;
         }
         
-        
         if (in_quotes) {
             buffer[buffer_index++] = c;
             continue;
         }
-        
         
         if (strchr("()<>|;", c)) {
             if (buffer_index > 0) {
@@ -68,7 +78,6 @@ char** tokenize(char* input) {
             continue;
         }
         
-        
         if (isspace(c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
@@ -82,10 +91,8 @@ char** tokenize(char* input) {
             continue;
         }
         
-        
         buffer[buffer_index++] = c;
     }
-    
     
     if (buffer_index > 0) {
         buffer[buffer_index] = '\0';
@@ -99,7 +106,7 @@ char** tokenize(char* input) {
     return tokens;
 }
 
-// functionality of execute_command
+// Functionality of execute_command
 void execute_command(char** args) {
     pid_t pid = fork();
 
@@ -107,35 +114,36 @@ void execute_command(char** args) {
         perror("Fork Failed");
         exit(1);
     } 
-    else if (pid==0) {
+    else if (pid == 0) {
         if (execvp(args[0], args) == -1) {
-            print(stderr, "%s: command not found\n", args[0]);
+            fprintf(stderr, "%s: command not found\n", args[0]);
             exit(1);
- }    } else {
-        wait(NULL);
+        }
+    } else {
+        wait(NULL);  // Parent process waits for child to complete
     }
 }
 
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
 
-    // welcome message
-    printf("Welcome to the mini-shell.");
+    // Welcome message
+    printf("Welcome to the mini-shell.\n");
 
     while (1) {
-        printf("shell $");
+        printf("shell $ ");
         fflush(stdout);
 
-        // handles Ctrl-D and if input is Exit
-        if ((fgets(input, INITIAL_INPUT_SIZE, stdin) == NULL) || (strcmp(input, "exit") == 0)) {
-            print ("Bye bye \n");
+        // Handle Ctrl-D and if input is 'exit'
+        if ((fgets(input, INITIAL_INPUT_SIZE, stdin) == NULL) || (strcmp(input, "exit\n") == 0)) {
+            printf("Bye bye.\n");
             break;
         }
 
-        //remove newline character from input
+        // Remove newline character from input
         input[strcspn(input, "\n")] = 0;
 
-        // tokenize the input into command and arguments
+        // Tokenize the input into command and arguments
         char** args = tokenize(input);
 
         if (args[0] == NULL) {
@@ -145,7 +153,7 @@ int main(int argc, char **argv) {
 
         execute_command(args);
     
-        // free memory space after printing out the tokens
+        // Free memory space after executing the command
         for (int i = 0; args[i] != NULL; i++) {
             free(args[i]);
         }
@@ -153,4 +161,3 @@ int main(int argc, char **argv) {
     }
     return 0;
 }
-
