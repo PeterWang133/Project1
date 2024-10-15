@@ -124,12 +124,39 @@ void execute_command(char** args) {
     }
 }
 
+// Function to handle semicolons and execute each command separately
+void process_commands(char* input) {
+    // Split the input by semicolons
+    char* command = strtok(input, ";");
+    while (command != NULL) {
+        // Trim leading and trailing whitespace from the command
+        while (isspace(*command)) command++;
+        char* end = command + strlen(command) - 1;
+        while (end > command && isspace(*end)) end--;
+        *(end + 1) = '\0';
+
+        // Tokenize and execute the command
+        char** args = tokenize(command);
+        if (args[0] != NULL) {
+            execute_command(args);
+        }
+        
+        // Free the tokens
+        for (int i = 0; args[i] != NULL; i++) {
+            free(args[i]);
+        }
+        free(args);
+
+        // Get the next command
+        command = strtok(NULL, ";");
+    }
+}
+
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
 
     // Welcome message
     printf("Welcome to the mini-shell.\n");
-
     while (1) {
         printf("shell $ ");
         fflush(stdout);
@@ -143,21 +170,8 @@ int main(int argc, char **argv) {
         // Remove newline character from input
         input[strcspn(input, "\n")] = 0;
 
-        // Tokenize the input into command and arguments
-        char** args = tokenize(input);
-
-        if (args[0] == NULL) {
-            free(args);
-            continue;
-        }
-
-        execute_command(args);
-    
-        // Free memory space after executing the command
-        for (int i = 0; args[i] != NULL; i++) {
-            free(args[i]);
-        }
-        free(args);
+        // Process and execute commands, handling semicolons
+        process_commands(input);
     }
     return 0;
 }
