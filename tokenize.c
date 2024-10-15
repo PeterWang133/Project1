@@ -8,26 +8,18 @@
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 
-// strdup function implementation
-char* strdup(const char* str) {
-    size_t len = strlen(str) + 1;
-    char* copy = malloc(len);
-    if (copy) {
-        memcpy(copy, str, len);
-    }
-    return copy;
-}
-
+// Purpose: Allocates memory for tokens
 char** allocate_tokens(int size) {
     return (char **)malloc(size * sizeof(char *));
 }
 
+// Purpose: Resizes token array when it exceeds initial size
 char** resize_tokens(char** tokens, int *size) {
     *size *= 2;  // Double the current size
     return (char **)realloc(tokens, (*size) * sizeof(char *));
 }
 
-// Tokenizer function
+// Purpose: Tokenizer function to split input into command tokens
 char** tokenize(char* input) {
     int token_size = INITIAL_TOKEN_SIZE;
     char** tokens = allocate_tokens(token_size);
@@ -40,13 +32,26 @@ char** tokenize(char* input) {
     for (int i = 0; input[i] != '\0'; i++) {
         char c = input[i];
       
+        // Handle quotes
         if (c == '"') {
             in_quotes = !in_quotes;
-            if (!in_quotes) {
+            continue;
+        }
+        
+        // If inside quotes, append characters to the buffer
+        if (in_quotes) {
+            buffer[buffer_index++] = c;
+            continue;
+        }
+        
+        // Handle spaces as delimiters between tokens
+        if (isspace(c)) {
+            if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
                 
+                // Resize token array if necessary
                 if (token_count >= token_size) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
@@ -54,12 +59,8 @@ char** tokenize(char* input) {
             continue;
         }
         
-        if (in_quotes) {
-            buffer[buffer_index++] = c;
-            continue;
-        }
-        
-        if (strchr("()<>|;", c)) {
+        // Handle shell special characters (e.g., pipes, redirects)
+        if (strchr("|<>", c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
@@ -69,6 +70,7 @@ char** tokenize(char* input) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
             }
+            // Special character as a separate token
             char special_token[2] = {c, '\0'};
             tokens[token_count++] = strdup(special_token);
             
@@ -78,22 +80,11 @@ char** tokenize(char* input) {
             continue;
         }
         
-        if (isspace(c)) {
-            if (buffer_index > 0) {
-                buffer[buffer_index] = '\0';
-                tokens[token_count++] = strdup(buffer);
-                buffer_index = 0;
-                // Resize if token array is full
-                if (token_count >= token_size) {
-                    tokens = resize_tokens(tokens, &token_size);
-                }
-            }
-            continue;
-        }
-        
+        // Add regular characters to the buffer
         buffer[buffer_index++] = c;
     }
     
+    // Finalize last token in the buffer
     if (buffer_index > 0) {
         buffer[buffer_index] = '\0';
         tokens[token_count++] = strdup(buffer);
@@ -102,11 +93,11 @@ char** tokenize(char* input) {
         }
     }
     
-    tokens[token_count] = NULL; 
+    tokens[token_count] = NULL;  // Null-terminate the token array
     return tokens;
 }
 
-// Functionality of execute_command
+// Purpose: Executes a single command using fork and execvp
 void execute_command(char** args) {
     pid_t pid = fork();
 
@@ -115,63 +106,60 @@ void execute_command(char** args) {
         exit(1);
     } 
     else if (pid == 0) {
+        // In child process, execute the command
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: command not found\n", args[0]);
             exit(1);
         }
     } else {
-        wait(NULL);  // Parent process waits for child to complete
+        // In parent process, wait for the child to complete
+        wait(NULL);
     }
 }
 
-// Function to handle semicolons and execute each command separately
+// Purpose: Process commands and handle multiple commands split by semicolons
 void process_commands(char* input) {
-    // Split the input by semicolons
-    char* command = strtok(input, ";");
-    while (command != NULL) {
-        // Trim leading and trailing whitespace from the command
-        while (isspace(*command)) command++;
-        char* end = command + strlen(command) - 1;
-        while (end > command && isspace(*end)) end--;
-        *(end + 1) = '\0';
+    int input_length = strlen(input);
+    int start = 0;
 
-        // Tokenize and execute the command
-        char** args = tokenize(command);
-        if (args[0] != NULL) {
-            execute_command(args);
-        }
-        
-        // Free the tokens
-        for (int i = 0; args[i] != NULL; i++) {
-            free(args[i]);
-        }
-        free(args);
+    // Process each command separately
+    for (int i = 0; i <= input_length; i++) {
+        if (input[i] == ';' || input[i] == '\0') {
+            input[i] = '\0';  // Temporarily terminate the command
 
-        // Get the next command
-        command = strtok(NULL, ";");
+            // Tokenize and execute the current command
+            char** args = tokenize(&input[start]);
+            if (args[0] != NULL) {
+                execute_command(args);
+            }
+
+            // Free the tokens
+            for (int j = 0; args[j] != NULL; j++) {
+                free(args[j]);
+            }
+            free(args);
+
+            start = i + 1;  // Move to the next command after the semicolon
+        }
     }
 }
 
 int main(int argc, char **argv) {
-    char input[INITIAL_INPUT_SIZE];
-
-    // Welcome message
-    printf("Welcome to the mini-shell.\n");
-    while (1) {
-        printf("shell $ ");
-        fflush(stdout);
-
-        // Handle Ctrl-D and if input is 'exit'
-        if ((fgets(input, INITIAL_INPUT_SIZE, stdin) == NULL) || (strcmp(input, "exit\n") == 0)) {
-            printf("Bye bye.\n");
-            break;
-        }
-
-        // Remove newline character from input
-        input[strcspn(input, "\n")] = 0;
-
-        // Process and execute commands, handling semicolons
-        process_commands(input);
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <input_string>\n", argv[0]);
+        return 1;
     }
+
+    char *input = argv[1];
+
+    char **tokens = tokenize(input);
+
+    // free memory space after printing out the tokens
+    for (int i = 0; tokens[i] != NULL; i++) {
+        printf("%s\n", tokens[i]);
+        free(tokens[i]);
+    }
+
+    free(tokens);
     return 0;
 }
