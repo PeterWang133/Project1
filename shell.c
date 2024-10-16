@@ -8,6 +8,10 @@
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 
+void process_commands();
+
+char* previous_command = NULL;
+
 // strdup function implementation
 char* strdup(const char* str) {
     size_t len = strlen(str) + 1;
@@ -106,26 +110,87 @@ char** tokenize(char* input) {
     return tokens;
 }
 
-// Functionality of execute_command
-void execute_command(char** args) {
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        perror("Fork Failed");
-        exit(1);
-    } 
-    else if (pid == 0) {
-        if (execvp(args[0], args) == -1) {
-            fprintf(stderr, "%s: command not found\n", args[0]);
-            exit(1);
-        }
-    } else {
-        wait(NULL);  // Parent process waits for child to complete
+// change_directory function
+void change_directory(char* path) {
+    if (path == NULL) {
+        path = getenv("HOME");
+    }
+    if (chdir(path) != 0) {
+        perror("cd");
     }
 }
 
-// Function to handle semicolons and execute each command separately
+// Function to handle source command
+void source_file(char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (file == NULL) {
+        perror("source");
+        return;
+    }
+
+    char line[INITIAL_INPUT_SIZE];
+    while (fgets(line, sizeof(line), file)) {
+        line[strcspn(line, "\n")] = 0;  // Remove newline
+        process_commands(line);
+    }
+
+    fclose(file);
+}
+
+// Function to handle prev command
+void execute_previous_command() {
+    if (previous_command == NULL) {
+        printf("No previous command\n");
+        return;
+    }
+    printf("%s\n", previous_command);
+    process_commands(previous_command);
+}
+
+// function not done
+void display_help() {
+    printf("cd - change of directory");
+}
+
+// Updated execute_command function
+void execute_command(char** args) {
+    if (args[0] == NULL) return;
+    if (strcmp(args[0], "cd") == 0) {
+        change_directory(args[1]);
+    } else if (strcmp(args[0], "source") == 0) {
+        if (args[1] != NULL) {
+            source_file(args[1]);
+        } else {
+            fprintf(stderr, "source: missing file argument\n");
+        }
+    } else if (strcmp(args[0], "prev") == 0) {
+        execute_previous_command();
+    } else if (strcmp(args[0], "help") == 0) {
+        display_help();
+    } else {
+        pid_t pid = fork();
+        if (pid < 0) {
+            perror("Fork Failed");
+            exit(1);
+        } else if (pid == 0) {
+            if (execvp(args[0], args) == -1) {
+                fprintf(stderr, "%s: command not found\n", args[0]);
+                exit(1);
+            }
+        } else {
+            wait(NULL);
+        }
+    }
+}
+
+//added code in top of funtion to update previous_command
 void process_commands(char* input) {
+    // Update previous_command
+    if (strcmp(input, "prev") != 0) {
+        free(previous_command);
+        previous_command = strdup(input);
+    }
+    
     // Split the input by semicolons
     char* command = strtok(input, ";");
     while (command != NULL) {
