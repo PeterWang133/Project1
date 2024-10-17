@@ -176,7 +176,7 @@ void execute_pipe(char** args1, char** args2) {
         close(pipefd[1]);
 
         if (execvp(args1[0], args1) == -1) {
-            perror("execvp LHS failed");
+            fprintf(stderr, "%s: command not found\n", args1[0]);
             exit(1);
         }
     }
@@ -193,7 +193,7 @@ void execute_pipe(char** args1, char** args2) {
         close(pipefd[0]);
 
         if (execvp(args2[0], args2) == -1) {
-            perror("execvp RHS failed");
+            fprintf(stderr, "%s: command not found\n", args2[0]);
             exit(1);
         }
     }
@@ -313,13 +313,15 @@ void process_commands(char* input) {
                     execute_command(args, input_file, output_file);
                 }
             }
-            
+
+            // Free the tokens
             for (int i = 0; args[i] != NULL; i++) {
                 free(args[i]);
             }
             free(args);
         }
 
+        // Get the next command
         command = strtok(NULL, ";");
     }
 }
@@ -327,17 +329,22 @@ void process_commands(char* input) {
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
 
+    // Welcome message
     printf("Welcome to the mini-shell.\n");
     while (1) {
         printf("shell $ ");
         fflush(stdout);
 
+        // Handle Ctrl-D and if input is 'exit'
         if ((fgets(input, INITIAL_INPUT_SIZE, stdin) == NULL) || (strcmp(input, "exit\n") == 0)) {
             printf("Bye bye.\n");
             break;
         }
 
+        // Remove newline character from input
         input[strcspn(input, "\n")] = 0;
+
+        // Process and execute commands, handling semicolons
         process_commands(input);
     }
     return 0;
