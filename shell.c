@@ -9,7 +9,7 @@
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 
-void process_commands();
+void process_commands(char* input);
 
 char* previous_command = NULL;
 
@@ -212,7 +212,7 @@ void execute_pipe(char** args1, char** args2) {
 }
 
 // Functionality of execute_command
-void execute_command(char** args) {
+void execute_command(char** args, char* input_file, char* output_file) {
     pid_t pid = fork();
 
     if (pid < 0) {
@@ -220,6 +220,29 @@ void execute_command(char** args) {
         exit(1);
     } 
     else if (pid == 0) {
+        // Input redirection
+        if (input_file) {
+            int fd_in = open(input_file, O_RDONLY);
+            if (fd_in < 0) {
+                perror("open input");
+                exit(1);
+            }
+            dup2(fd_in, STDIN_FILENO);
+            close(fd_in);
+        }
+
+        // Output redirection
+        if (output_file) {
+            int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);  // Create or truncate the file
+            if (fd_out < 0) {
+                perror("open output");
+                exit(1);
+            }
+            dup2(fd_out, STDOUT_FILENO);
+            close(fd_out);
+        }
+
+        // Execute the command
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: command not found\n", args[0]);
             exit(1);
