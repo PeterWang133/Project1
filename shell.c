@@ -9,6 +9,7 @@
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 
+// Records the previous command
 char *last_command = NULL;
 
 void process_commands(char* input);
