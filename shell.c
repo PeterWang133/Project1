@@ -15,6 +15,7 @@ int first_command = 1;  // Flag to track first command
 // Forward declarations
 void process_commands(char* input);
 char** tokenize(char* input);
+void free_tokens(char **tokens);
 void execute_command(char** args, char* input_file, char* output_file);
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file);
 void command_help(void);
@@ -30,7 +31,21 @@ char** resize_tokens(char** tokens, int *size);
  * Allocates memory for token array
  */
 char** allocate_tokens(int size) {
-    return (char **)malloc(size * sizeof(char *));
+    char **tokens = (char **)malloc(size * sizeof(char *));
+    if (!tokens) {
+        fprintf(stderr, "Error: Memory allocation failed for tokens.\n");
+        exit(EXIT_FAILURE);
+    }
+    return tokens;
+}
+
+void free_tokens(char **tokens) {
+    if (tokens) {
+        for (int i = 0; tokens[i] != NULL; i++) {
+            free(tokens[i]);
+        }
+        free(tokens);
+    }
 }
 
 /**
@@ -38,7 +53,12 @@ char** allocate_tokens(int size) {
  */
 char** resize_tokens(char** tokens, int *size) {
     *size *= 2;
-    return (char **)realloc(tokens, (*size) * sizeof(char *));
+    char **new_tokens = (char **)realloc(tokens, (*size) * sizeof(char *));
+    if (!new_tokens) {
+        fprintf(stderr, "Error: Memory allocation failed while resizing tokens.\n");
+        exit(EXIT_FAILURE);
+    }
+    return new_tokens;
 }
 
 /**
@@ -113,6 +133,7 @@ char** tokenize(char* input) {
     tokens[token_count] = NULL; 
     return tokens;
 }
+
 
 /**
  * Saves the last executed command
@@ -209,7 +230,7 @@ void command_source(char *filename) {
  */
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
     int pipe_fds[2];
-    int input_fd = STDIN_FILENO; // Initial input is standard input
+    int input_fd = STDIN_FILENO;
 
     // Handle input redirection if input_file is specified
     if (input_file) {
@@ -233,13 +254,12 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
             perror("fork failed");
             exit(1);
         } else if (pid == 0) {
-            // Redirect input from previous command or file
+            // Child process
             if (input_fd != STDIN_FILENO) {
                 dup2(input_fd, STDIN_FILENO);
                 close(input_fd);
             }
 
-            // Redirect output to next command or file
             if (i < num_commands - 1) {
                 close(pipe_fds[0]);
                 dup2(pipe_fds[1], STDOUT_FILENO);
@@ -254,35 +274,37 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
                 close(fd_out);
             }
 
-            // Execute the command
             if (execvp(commands[i][0], commands[i]) == -1) {
                 perror("command execution failed");
                 exit(1);
             }
         }
 
-        // Close input_fd as it's now duplicated in the child process
+        // Parent process
         if (input_fd != STDIN_FILENO) {
             close(input_fd);
         }
 
-        // Update input_fd for the next command
         if (i < num_commands - 1) {
             close(pipe_fds[1]);
             input_fd = pipe_fds[0];
         }
     }
 
-    // Close the last input_fd if it's not stdin
     if (input_fd != STDIN_FILENO) {
         close(input_fd);
     }
 
-    // Wait for all children
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
+
+    // Free tokens after usage to avoid double freeing
+    for (int i = 0; i < num_commands; i++) {
+        free_tokens(commands[i]);
+    }
 }
+
 
 
 /**
@@ -332,7 +354,7 @@ void process_commands(char* input) {
     if (strcmp(input, "prev") != 0) {
         save_last_command(input);
     }
-    
+
     char* command = strtok(input, ";");
     while (command != NULL) {
         while (isspace(*command)) command++;
@@ -367,18 +389,20 @@ void process_commands(char* input) {
             int index = 0;
 
             while (pipe_command != NULL) {
-                pipe_commands[index++] = tokenize(pipe_command);
+                pipe_commands[index] = tokenize(pipe_command);
+                if (pipe_commands[index] == NULL) {
+                    fprintf(stderr, "Error tokenizing pipe command.\n");
+                    return;
+                }
+                index++;
                 pipe_command = strtok(NULL, "|");
             }
 
             execute_pipe(pipe_commands, num_pipes + 1, input_file, output_file);
 
+            // Free tokens
             for (int i = 0; i < num_pipes + 1; i++) {
-                char** args = pipe_commands[i];
-                for (int j = 0; args[j] != NULL; j++) {
-                    free(args[j]);
-                }
-                free(args);
+                free_tokens(pipe_commands[i]);
             }
         } else {
             char** args = tokenize(command);
@@ -397,13 +421,13 @@ void process_commands(char* input) {
                 }
             }
 
-            for (int i = 0; args[i] != NULL; i++) free(args[i]);
-            free(args);
+            free_tokens(args);
         }
 
         command = strtok(NULL, ";");
     }
 }
+
 
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
