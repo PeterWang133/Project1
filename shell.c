@@ -16,7 +16,7 @@ int first_command = 1;  // Flag to track first command
 void process_commands(char* input);
 char** tokenize(char* input);
 void execute_command(char** args, char* input_file, char* output_file);
-void execute_pipe(char*** commands, int num_commands);
+void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file);
 void command_help(void);
 void command_cd(char **args);
 void command_source(char *filename);
@@ -207,9 +207,17 @@ void command_source(char *filename) {
 /**
  * Executes multiple commands connected by pipes with proper input and output redirection.
  */
-void execute_pipe(char*** commands, int num_commands) {
+void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
     int pipe_fds[2];
     int input_fd = 0; // Initial input is standard input (stdin)
+
+    if (input_file) {
+        input_fd = open(input_file, O_RDONLY);
+        if (input_fd < 0) {
+            fprintf(stderr, "Cannot open file: %s\n", input_file);
+            exit(1);
+        }
+    }
 
     for (int i = 0; i < num_commands; i++) {
         if (i < num_commands - 1) {
@@ -233,6 +241,14 @@ void execute_pipe(char*** commands, int num_commands) {
                 close(pipe_fds[0]);
                 dup2(pipe_fds[1], STDOUT_FILENO);
                 close(pipe_fds[1]);
+            } else if (output_file) {
+                int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd_out < 0) {
+                    fprintf(stderr, "Cannot open file: %s\n", output_file);
+                    exit(1);
+                }
+                dup2(fd_out, STDOUT_FILENO);
+                close(fd_out);
             }
 
             if (execvp(commands[i][0], commands[i]) == -1) {
@@ -241,11 +257,14 @@ void execute_pipe(char*** commands, int num_commands) {
             }
         }
 
-        if (i < num_commands - 1) {
-            close(pipe_fds[1]);
+        if (input_fd != 0) {
+            close(input_fd);
         }
 
-        input_fd = pipe_fds[0];
+        if (i < num_commands - 1) {
+            close(pipe_fds[1]);
+            input_fd = pipe_fds[0];
+        }
     }
 
     if (input_fd != 0) {
@@ -298,7 +317,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
 }
 
 /**
- * Process command function modification to handle multiple pipes
+ * Process command function modification to handle multiple pipes and redirection
  */
 void process_commands(char* input) {
     if (strcmp(input, "prev") != 0) {
@@ -343,7 +362,7 @@ void process_commands(char* input) {
                 pipe_command = strtok(NULL, "|");
             }
 
-            execute_pipe(pipe_commands, num_pipes + 1);
+            execute_pipe(pipe_commands, num_pipes + 1, input_file, output_file);
 
             for (int i = 0; i < num_pipes + 1; i++) {
                 char** args = pipe_commands[i];
