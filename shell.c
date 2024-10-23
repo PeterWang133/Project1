@@ -118,8 +118,14 @@ char** tokenize(char* input) {
  * Saves the last executed command
  */
 void save_last_command(char *input) {
-    if (last_command) free(last_command);
-    last_command = strdup(input);
+    if (last_command) {
+    first_command = 0;
+    char *copy_last_command = strdup(last_command);
+    process_commands(copy_last_command);
+    free(copy_last_command);
+} else {
+    printf("No previous command found.\n");
+}
 }
 
 /**
