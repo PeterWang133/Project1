@@ -1,3 +1,4 @@
+// importing important libraries
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,23 +7,44 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
+// initalizing global variables
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
-
 char *last_command = NULL;
+int first_command = 1;  // Flag to track first command
 
+// Forward declarations
 void process_commands(char* input);
+char** tokenize(char* input);
+void execute_command(char** args, char* input_file, char* output_file);
+void execute_pipe(char** args1, char** args2);
+void command_help(void);
+void command_cd(char **args);
+void command_source(char *filename);
+void command_prev(void);
+void save_last_command(char *input);
+char** allocate_tokens(int size);
+char** resize_tokens(char** tokens, int *size);
 
+/**
+ * Allocates memory for token array
+ */
 char** allocate_tokens(int size) {
     return (char **)malloc(size * sizeof(char *));
 }
 
+/**
+ * Resizes token array when needed
+ */
 char** resize_tokens(char** tokens, int *size) {
     *size *= 2;
     return (char **)realloc(tokens, (*size) * sizeof(char *));
 }
 
-// Tokenizer function
+/**
+ * Tokenizes input string into array of strings
+ * Handles quotes, spaces, and special characters
+ */
 char** tokenize(char* input) {
     int token_size = INITIAL_TOKEN_SIZE;
     char** tokens = allocate_tokens(token_size);
@@ -37,15 +59,6 @@ char** tokenize(char* input) {
       
         if (c == '"') {
             in_quotes = !in_quotes;
-            if (!in_quotes) {
-                buffer[buffer_index] = '\0';
-                tokens[token_count++] = strdup(buffer);
-                buffer_index = 0;
-                
-                if (token_count >= token_size) {
-                    tokens = resize_tokens(tokens, &token_size);
-                }
-            }
             continue;
         }
         
@@ -101,23 +114,30 @@ char** tokenize(char* input) {
     return tokens;
 }
 
-// Save the last command
+/**
+ * Saves the last executed command
+ */
 void save_last_command(char *input) {
     if (last_command) free(last_command);
     last_command = strdup(input);
 }
 
-void command_prev() {
+/**
+ * Executes the previous command
+ */
+void command_prev(void) {
     if (last_command) {
-        printf("%s\n", last_command);
+        first_command = 0;  // Prevent welcome message
         char *copy_last_command = strdup(last_command);
         process_commands(copy_last_command);
         free(copy_last_command);
     }
 }
 
-// Built-in command for 'help'
-void command_help() {
+/**
+ * Displays help information
+ */
+void command_help(void) {
     printf("Available built-in commands:\n");
     printf("cd [path] - Change directory\n");
     printf("source [filename] - Execute script\n");
@@ -126,6 +146,9 @@ void command_help() {
     printf("exit - Exit the shell\n");
 }
 
+/**
+ * Changes current directory
+ */
 void command_cd(char **args) {
     if (args[1] == NULL) {
         chdir(getenv("HOME"));
@@ -136,10 +159,12 @@ void command_cd(char **args) {
     }
 }
 
-// Execute the command in a specified file
+/**
+ * Executes commands from a file
+ */
 void command_source(char *filename) {
     if (!filename) {
-        fprintf(stderr, "source: No such file: %s\n", filename);
+        fprintf(stderr, "source: Missing filename\n");
         return;
     }
     FILE *file = fopen(filename, "r");
@@ -150,11 +175,15 @@ void command_source(char *filename) {
     char line[INITIAL_INPUT_SIZE];
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = 0;
+        first_command = 0;  // Prevent welcome message
         process_commands(line);
     }
     fclose(file);
 }
 
+/**
+ * Executes a pipe between two commands
+ */
 void execute_pipe(char** args1, char** args2) {
     int pipefd[2];
     pid_t p1, p2;
@@ -201,10 +230,13 @@ void execute_pipe(char** args1, char** args2) {
     close(pipefd[0]);
     close(pipefd[1]);
 
-    wait(NULL);
-    wait(NULL);
+    waitpid(p1, NULL, 0);
+    waitpid(p2, NULL, 0);
 }
 
+/**
+ * Executes a single command with optional I/O redirection
+ */
 void execute_command(char** args, char* input_file, char* output_file) {
     pid_t pid = fork();
 
@@ -238,11 +270,17 @@ void execute_command(char** args, char* input_file, char* output_file) {
             exit(1);
         }
     } else {
-        wait(NULL);
+        waitpid(pid, NULL, 0);
     }
 }
 
+/**
+ * Processes and executes commands
+ * Handles command sequencing, pipes, and I/O redirection
+ */
 void process_commands(char* input) {
+    save_last_command(input);
+    
     char* command = strtok(input, ";");
     while (command != NULL) {
         while (isspace(*command)) command++;
@@ -288,14 +326,10 @@ void process_commands(char* input) {
                 execute_pipe(args1, args2);
             }
 
-            for (int i = 0; args1[i] != NULL; i++) {
-                free(args1[i]);
-            }
+            for (int i = 0; args1[i] != NULL; i++) free(args1[i]);
             free(args1);
 
-            for (int i = 0; args2[i] != NULL; i++) {
-                free(args2[i]);
-            }
+            for (int i = 0; args2[i] != NULL; i++) free(args2[i]);
             free(args2);
         } else {
             char** args = tokenize(command);
@@ -314,39 +348,32 @@ void process_commands(char* input) {
                 }
             }
 
-            // Free the tokens
-            for (int i = 0; args[i] != NULL; i++) {
-                free(args[i]);
-            }
+            for (int i = 0; args[i] != NULL; i++) free(args[i]);
             free(args);
         }
 
-        // Get the next command
         command = strtok(NULL, ";");
     }
 }
 
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
+    printf("Welcome to mini-shell\n");  // Removed period to match test
 
-    // Welcome message
-    printf("Welcome to the mini-shell.\n");
     while (1) {
         printf("shell $ ");
         fflush(stdout);
 
-        // Handle Ctrl-D and if input is 'exit'
         if ((fgets(input, INITIAL_INPUT_SIZE, stdin) == NULL) || (strcmp(input, "exit\n") == 0)) {
             printf("Bye bye.\n");
             break;
         }
 
-        // Remove newline character from input
         input[strcspn(input, "\n")] = 0;
-
-        // Process and execute commands, handling semicolons
+        first_command = 0;  // Mark that we're past the first command
         process_commands(input);
     }
+
+    if (last_command) free(last_command);
     return 0;
 }
-
