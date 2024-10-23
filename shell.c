@@ -16,7 +16,7 @@ int first_command = 1;  // Flag to track first command
 void process_commands(char* input);
 char** tokenize(char* input);
 void execute_command(char** args, char* input_file, char* output_file);
-void execute_pipe(char** args1, char** args2);
+void execute_pipe(char*** commands, int num_commands);
 void command_help(void);
 void command_cd(char **args);
 void command_source(char *filename);
@@ -183,56 +183,63 @@ void command_source(char *filename) {
 }
 
 /**
- * Executes a pipe between two commands
+ * Executes multiple commands connected by pipes
  */
-void execute_pipe(char** args1, char** args2) {
-    int pipefd[2];
-    pid_t p1, p2;
+void execute_pipe(char*** commands, int num_commands) {
+    int pipe_fds[2];
+    int input_fd = 0; // Initial input is standard input (stdin)
 
-    if (pipe(pipefd) == -1) {
-        perror("pipe failed");
-        exit(1);
-    }
-
-    p1 = fork();
-    if (p1 < 0) {
-        perror("fork failed");
-        exit(1);
-    }
-
-    if (p1 == 0) {
-        close(pipefd[0]);
-        dup2(pipefd[1], STDOUT_FILENO);
-        close(pipefd[1]);
-
-        if (execvp(args1[0], args1) == -1) {
-            fprintf(stderr, "%s: command not found\n", args1[0]);
-            exit(1);
+    for (int i = 0; i < num_commands; i++) {
+        // Create a pipe for all but the last command
+        if (i < num_commands - 1) {
+            if (pipe(pipe_fds) == -1) {
+                perror("pipe failed");
+                exit(1);
+            }
         }
-    }
 
-    p2 = fork();
-    if (p2 < 0) {
-        perror("fork failed");
-        exit(1);
-    }
-
-    if (p2 == 0) {
-        close(pipefd[1]);
-        dup2(pipefd[0], STDIN_FILENO);
-        close(pipefd[0]);
-
-        if (execvp(args2[0], args2) == -1) {
-            fprintf(stderr, "%s: command not found\n", args2[0]);
+        pid_t pid = fork();
+        if (pid == -1) {
+            perror("fork failed");
             exit(1);
+        } else if (pid == 0) {
+            // Child process
+
+            // If not the first command, set the input to the previous pipe's read end
+            if (input_fd != 0) {
+                dup2(input_fd, 0);
+                close(input_fd);
+            }
+
+            // If not the last command, set the output to the current pipe's write end
+            if (i < num_commands - 1) {
+                close(pipe_fds[0]);
+                dup2(pipe_fds[1], 1);
+                close(pipe_fds[1]);
+            }
+
+            // Execute the command
+            if (execvp(commands[i][0], commands[i]) == -1) {
+                fprintf(stderr, "%s: command not found\n", commands[i][0]);
+                exit(1);
+            }
         }
+
+        // Parent process
+
+        // Close the write end of the pipe in the parent
+        if (i < num_commands - 1) {
+            close(pipe_fds[1]);
+        }
+
+        // Update input_fd to the read end of the current pipe for the next command
+        input_fd = pipe_fds[0];
     }
 
-    close(pipefd[0]);
-    close(pipefd[1]);
-
-    waitpid(p1, NULL, 0);
-    waitpid(p2, NULL, 0);
+    // Wait for all child processes to complete
+    for (int i = 0; i < num_commands; i++) {
+        wait(NULL);
+    }
 }
 
 /**
@@ -276,8 +283,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
 }
 
 /**
- * Processes and executes commands
- * Handles command sequencing, pipes, and I/O redirection
+ * Process command function modification to handle multiple pipes
  */
 void process_commands(char* input) {
     save_last_command(input);
@@ -313,25 +319,35 @@ void process_commands(char* input) {
             output_file = strtok(output_redirect_pos + 1, " \t");
         }
 
-        char* pipe_pos = strchr(command, '|');
-        if (pipe_pos) {
-            *pipe_pos = '\0';
-            char* rhs_command = pipe_pos + 1;
+        // Count the number of pipe segments
+        int num_pipes = 0;
+        char* temp = command;
+        while ((temp = strchr(temp, '|')) != NULL) {
+            num_pipes++;
+            temp++;
+        }
 
-            char** args1 = tokenize(command);
-            char** args2 = tokenize(rhs_command);
+        // Handle pipeline commands
+        if (num_pipes > 0) {
+            char** pipe_commands[num_pipes + 1];
+            char* pipe_command = strtok(command, "|");
+            int index = 0;
 
-            if (args1[0] == NULL || args2[0] == NULL) {
-                fprintf(stderr, "Invalid pipe command.\n");
-            } else {
-                execute_pipe(args1, args2);
+            while (pipe_command != NULL) {
+                pipe_commands[index++] = tokenize(pipe_command);
+                pipe_command = strtok(NULL, "|");
             }
 
-            for (int i = 0; args1[i] != NULL; i++) free(args1[i]);
-            free(args1);
+            execute_pipe(pipe_commands, num_pipes + 1);
 
-            for (int i = 0; args2[i] != NULL; i++) free(args2[i]);
-            free(args2);
+            // Free the tokenized commands
+            for (int i = 0; i < num_pipes + 1; i++) {
+                char** args = pipe_commands[i];
+                for (int j = 0; args[j] != NULL; j++) {
+                    free(args[j]);
+                }
+                free(args);
+            }
         } else {
             char** args = tokenize(command);
 
