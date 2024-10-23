@@ -6,7 +6,7 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
-// initalizing global variables
+// Initializing global variables
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 char *last_command = NULL;
@@ -118,17 +118,11 @@ char** tokenize(char* input) {
  * Saves the last executed command
  */
 void save_last_command(char *input) {
-    // Check if the input is valid and non-empty
     if (input && strlen(input) > 0) {
-        // Free the existing last_command if it exists
         if (last_command != NULL) {
             free(last_command);
         }
-
-        // Duplicate the input and assign it to last_command
         last_command = strdup(input);
-
-        // Ensure memory allocation succeeded
         if (last_command == NULL) {
             fprintf(stderr, "Error: Memory allocation failed while saving the command.\n");
             exit(EXIT_FAILURE);
@@ -140,21 +134,13 @@ void save_last_command(char *input) {
  * Executes the previous command
  */
 void command_prev(void) {
-    // Check if a previous command exists
     if (last_command && strlen(last_command) > 0) {
-        // Make a copy of the last command for safe execution
         char *command_copy = strdup(last_command);
-
-        // Ensure memory allocation succeeded
         if (command_copy == NULL) {
             fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
             exit(EXIT_FAILURE);
         }
-
-        // Process the copied command (but avoid saving 'prev' again)
         process_commands(command_copy);
-
-        // Free the copied command after it has been processed
         free(command_copy);
     } else {
         printf("No previous command found.\n");
@@ -163,7 +149,6 @@ void command_prev(void) {
 
 /**
  * Frees the memory allocated for the last_command variable before exiting the shell.
- * This function should be called when the shell exits to clean up resources.
  */
 void cleanup_last_command(void) {
     if (last_command != NULL) {
@@ -213,7 +198,7 @@ void command_source(char *filename) {
     char line[INITIAL_INPUT_SIZE];
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = 0;
-        first_command = 0;  // Prevent welcome message
+        first_command = 0;
         process_commands(line);
     }
     fclose(file);
@@ -227,7 +212,6 @@ void execute_pipe(char*** commands, int num_commands) {
     int input_fd = 0; // Initial input is standard input (stdin)
 
     for (int i = 0; i < num_commands; i++) {
-        // Create a pipe for all but the last command
         if (i < num_commands - 1) {
             if (pipe(pipe_fds) == -1) {
                 perror("pipe failed");
@@ -240,50 +224,38 @@ void execute_pipe(char*** commands, int num_commands) {
             perror("fork failed");
             exit(1);
         } else if (pid == 0) {
-            // Child process
-
-            // If not the first command, set the input to the previous pipe's read end
             if (input_fd != 0) {
                 dup2(input_fd, STDIN_FILENO);
                 close(input_fd);
             }
 
-            // If not the last command, set the output to the current pipe's write end
             if (i < num_commands - 1) {
-                close(pipe_fds[0]); // Close read end
+                close(pipe_fds[0]);
                 dup2(pipe_fds[1], STDOUT_FILENO);
                 close(pipe_fds[1]);
             }
 
-            // Execute the command
             if (execvp(commands[i][0], commands[i]) == -1) {
                 fprintf(stderr, "%s: command not found\n", commands[i][0]);
                 exit(1);
             }
         }
 
-        // Parent process
-
-        // Close the write end of the pipe in the parent
         if (i < num_commands - 1) {
             close(pipe_fds[1]);
         }
 
-        // Update input_fd to the read end of the current pipe for the next command
         input_fd = pipe_fds[0];
     }
 
-    // Close the last read end if it's open
     if (input_fd != 0) {
         close(input_fd);
     }
 
-    // Wait for all child processes to complete
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
 }
-
 
 /**
  * Executes a single command with optional I/O redirection
@@ -296,7 +268,6 @@ void execute_command(char** args, char* input_file, char* output_file) {
         exit(1);
     } 
     else if (pid == 0) {
-        // Handle input redirection
         if (input_file) {
             int fd_in = open(input_file, O_RDONLY);
             if (fd_in < 0) {
@@ -307,7 +278,6 @@ void execute_command(char** args, char* input_file, char* output_file) {
             close(fd_in);
         }
 
-        // Handle output redirection
         if (output_file) {
             int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd_out < 0) {
@@ -318,7 +288,6 @@ void execute_command(char** args, char* input_file, char* output_file) {
             close(fd_out);
         }
 
-        // Execute the command
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: command not found\n", args[0]);
             exit(1);
@@ -328,12 +297,10 @@ void execute_command(char** args, char* input_file, char* output_file) {
     }
 }
 
-
 /**
  * Process command function modification to handle multiple pipes
  */
 void process_commands(char* input) {
-    // Avoid saving the 'prev' command itself as the last command to prevent recursion
     if (strcmp(input, "prev") != 0) {
         save_last_command(input);
     }
@@ -349,16 +316,6 @@ void process_commands(char* input) {
         char *input_redirect_pos = strchr(command, '<');
         char *output_redirect_pos = strchr(command, '>');
 
-        if (input_redirect_pos && strchr(input_redirect_pos + 1, '<')) {
-            fprintf(stderr, "Error: Multiple input redirections.\n");
-            return;
-        }
-
-        if (output_redirect_pos && strchr(output_redirect_pos + 1, '>')) {
-            fprintf(stderr, "Error: Multiple output redirections.\n");
-            return;
-        }
-
         if (input_redirect_pos) {
             *input_redirect_pos = '\0';
             input_file = strtok(input_redirect_pos + 1, " \t");
@@ -369,7 +326,6 @@ void process_commands(char* input) {
             output_file = strtok(output_redirect_pos + 1, " \t");
         }
 
-        // Count the number of pipe segments
         int num_pipes = 0;
         char* temp = command;
         while ((temp = strchr(temp, '|')) != NULL) {
@@ -377,7 +333,6 @@ void process_commands(char* input) {
             temp++;
         }
 
-        // Handle pipeline commands
         if (num_pipes > 0) {
             char** pipe_commands[num_pipes + 1];
             char* pipe_command = strtok(command, "|");
@@ -390,7 +345,6 @@ void process_commands(char* input) {
 
             execute_pipe(pipe_commands, num_pipes + 1);
 
-            // Free the tokenized commands
             for (int i = 0; i < num_pipes + 1; i++) {
                 char** args = pipe_commands[i];
                 for (int j = 0; args[j] != NULL; j++) {
@@ -425,7 +379,7 @@ void process_commands(char* input) {
 
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
-    printf("Welcome to mini-shell\n");  // Removed period to match test
+    printf("Welcome to mini-shell\n");
 
     while (1) {
         printf("shell $ ");
@@ -437,11 +391,10 @@ int main(int argc, char **argv) {
         }
 
         input[strcspn(input, "\n")] = 0;
-        first_command = 0;  // Mark that we're past the first command
+        first_command = 0;
         process_commands(input);
     }
 
     cleanup_last_command();
-
     return 0;
 }
