@@ -142,12 +142,6 @@ void save_last_command(char *input) {
 void command_prev(void) {
     // Check if a previous command exists
     if (last_command && strlen(last_command) > 0) {
-        // Prevent recursion or overwriting during a 'prev' call
-        if (strcmp(last_command, "prev") == 0) {
-            printf("Cannot repeat the 'prev' command consecutively.\n");
-            return;
-        }
-
         // Make a copy of the last command for safe execution
         char *command_copy = strdup(last_command);
 
@@ -157,7 +151,7 @@ void command_prev(void) {
             exit(EXIT_FAILURE);
         }
 
-        // Process the copied command
+        // Process the copied command (but avoid saving 'prev' again)
         process_commands(command_copy);
 
         // Free the copied command after it has been processed
@@ -226,7 +220,7 @@ void command_source(char *filename) {
 }
 
 /**
- * Executes multiple commands connected by pipes
+ * Executes multiple commands connected by pipes with proper input and output redirection.
  */
 void execute_pipe(char*** commands, int num_commands) {
     int pipe_fds[2];
@@ -250,14 +244,14 @@ void execute_pipe(char*** commands, int num_commands) {
 
             // If not the first command, set the input to the previous pipe's read end
             if (input_fd != 0) {
-                dup2(input_fd, 0);
+                dup2(input_fd, STDIN_FILENO);
                 close(input_fd);
             }
 
             // If not the last command, set the output to the current pipe's write end
             if (i < num_commands - 1) {
-                close(pipe_fds[0]);
-                dup2(pipe_fds[1], 1);
+                close(pipe_fds[0]); // Close read end
+                dup2(pipe_fds[1], STDOUT_FILENO);
                 close(pipe_fds[1]);
             }
 
@@ -279,11 +273,17 @@ void execute_pipe(char*** commands, int num_commands) {
         input_fd = pipe_fds[0];
     }
 
+    // Close the last read end if it's open
+    if (input_fd != 0) {
+        close(input_fd);
+    }
+
     // Wait for all child processes to complete
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
 }
+
 
 /**
  * Executes a single command with optional I/O redirection
@@ -296,6 +296,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
         exit(1);
     } 
     else if (pid == 0) {
+        // Handle input redirection
         if (input_file) {
             int fd_in = open(input_file, O_RDONLY);
             if (fd_in < 0) {
@@ -306,6 +307,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
             close(fd_in);
         }
 
+        // Handle output redirection
         if (output_file) {
             int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd_out < 0) {
@@ -316,6 +318,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
             close(fd_out);
         }
 
+        // Execute the command
         if (execvp(args[0], args) == -1) {
             fprintf(stderr, "%s: command not found\n", args[0]);
             exit(1);
@@ -325,11 +328,12 @@ void execute_command(char** args, char* input_file, char* output_file) {
     }
 }
 
+
 /**
  * Process command function modification to handle multiple pipes
  */
 void process_commands(char* input) {
-    
+    // Avoid saving the 'prev' command itself as the last command to prevent recursion
     if (strcmp(input, "prev") != 0) {
         save_last_command(input);
     }
