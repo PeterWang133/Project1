@@ -131,25 +131,74 @@ void save_last_command(char *input) {
 }
 
 /**
- * Executes the previous command
+ * Executes the previous command and prefixes its output with ".*" before printing it.
  */
 void command_prev(void) {
     if (last_command && strlen(last_command) > 0) {
-        // Print the previous command with ".*" prefix
-        printf(".*%s\n", last_command);
-
-        // Duplicate and execute the previous command
         char *command_copy = strdup(last_command);
         if (command_copy == NULL) {
             fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
             exit(EXIT_FAILURE);
         }
+
+        // Create a temporary file for capturing the output
+        char temp_file[] = "/tmp/prev_command_output.XXXXXX";
+        int temp_fd = mkstemp(temp_file);
+        if (temp_fd == -1) {
+            perror("Error creating temporary file");
+            free(command_copy);
+            return;
+        }
+
+        // Redirect stdout to the temporary file
+        int stdout_backup = dup(STDOUT_FILENO);
+        if (stdout_backup == -1) {
+            perror("Error duplicating stdout");
+            close(temp_fd);
+            free(command_copy);
+            return;
+        }
+
+        if (dup2(temp_fd, STDOUT_FILENO) == -1) {
+            perror("Error redirecting stdout");
+            close(temp_fd);
+            free(command_copy);
+            return;
+        }
+
+        // Close the temporary file descriptor as it's now redirected
+        close(temp_fd);
+
+        // Execute the previous command
         process_commands(command_copy);
         free(command_copy);
+
+        // Restore the original stdout
+        fflush(stdout);
+        dup2(stdout_backup, STDOUT_FILENO);
+        close(stdout_backup);
+
+        // Open the temporary file for reading
+        FILE *file = fopen(temp_file, "r");
+        if (!file) {
+            perror("Error opening temporary file for reading");
+            return;
+        }
+
+        // Read the output line by line and print it with the ".*" prefix
+        char line[INITIAL_INPUT_SIZE];
+        while (fgets(line, sizeof(line), file) != NULL) {
+            printf(".*%s", line);
+        }
+
+        fclose(file);
+        // Remove the temporary file after reading its content
+        remove(temp_file);
     } else {
         printf("No previous command found.\n");
     }
 }
+
 
 /**
  * Frees the memory allocated for the last_command variable before exiting the shell.
