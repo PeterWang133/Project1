@@ -209,12 +209,13 @@ void command_source(char *filename) {
  */
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
     int pipe_fds[2];
-    int input_fd = 0; // Initial input is standard input (stdin)
+    int input_fd = STDIN_FILENO; // Initial input is standard input
 
+    // Handle input redirection if input_file is specified
     if (input_file) {
         input_fd = open(input_file, O_RDONLY);
         if (input_fd < 0) {
-            fprintf(stderr, "Cannot open file: %s\n", input_file);
+            perror("Cannot open input file");
             exit(1);
         }
     }
@@ -232,11 +233,13 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
             perror("fork failed");
             exit(1);
         } else if (pid == 0) {
-            if (input_fd != 0) {
+            // Redirect input from previous command or file
+            if (input_fd != STDIN_FILENO) {
                 dup2(input_fd, STDIN_FILENO);
                 close(input_fd);
             }
 
+            // Redirect output to next command or file
             if (i < num_commands - 1) {
                 close(pipe_fds[0]);
                 dup2(pipe_fds[1], STDOUT_FILENO);
@@ -244,37 +247,43 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
             } else if (output_file) {
                 int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (fd_out < 0) {
-                    fprintf(stderr, "Cannot open file: %s\n", output_file);
+                    perror("Cannot open output file");
                     exit(1);
                 }
                 dup2(fd_out, STDOUT_FILENO);
                 close(fd_out);
             }
 
+            // Execute the command
             if (execvp(commands[i][0], commands[i]) == -1) {
-                fprintf(stderr, "%s: command not found\n", commands[i][0]);
+                perror("command execution failed");
                 exit(1);
             }
         }
 
-        if (input_fd != 0) {
+        // Close input_fd as it's now duplicated in the child process
+        if (input_fd != STDIN_FILENO) {
             close(input_fd);
         }
 
+        // Update input_fd for the next command
         if (i < num_commands - 1) {
             close(pipe_fds[1]);
             input_fd = pipe_fds[0];
         }
     }
 
-    if (input_fd != 0) {
+    // Close the last input_fd if it's not stdin
+    if (input_fd != STDIN_FILENO) {
         close(input_fd);
     }
 
+    // Wait for all children
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
 }
+
 
 /**
  * Executes a single command with optional I/O redirection
