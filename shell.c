@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -135,13 +136,14 @@ void save_last_command(char *input) {
  */
 void command_prev(void) {
     if (last_command && strlen(last_command) > 0) {
+        // Execute the previous command and capture its output
         char *command_copy = strdup(last_command);
         if (command_copy == NULL) {
             fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
             exit(EXIT_FAILURE);
         }
 
-        // Create a temporary file for capturing the output
+        // Redirect output to a temporary file
         char temp_file[] = "/tmp/prev_command_output.XXXXXX";
         int temp_fd = mkstemp(temp_file);
         if (temp_fd == -1) {
@@ -150,7 +152,7 @@ void command_prev(void) {
             return;
         }
 
-        // Redirect stdout to the temporary file
+        // Save stdout and redirect it to the temp file
         int stdout_backup = dup(STDOUT_FILENO);
         if (stdout_backup == -1) {
             perror("Error duplicating stdout");
@@ -166,33 +168,31 @@ void command_prev(void) {
             return;
         }
 
-        // Close the temporary file descriptor as it's now redirected
         close(temp_fd);
 
-        // Execute the previous command
+        // Execute the command without affecting the last_command
+        first_command = 0;
         process_commands(command_copy);
         free(command_copy);
 
-        // Restore the original stdout
+        // Restore stdout
         fflush(stdout);
         dup2(stdout_backup, STDOUT_FILENO);
         close(stdout_backup);
 
-        // Open the temporary file for reading
+        // Open the temp file to read its content and print it with ".*" prefix
         FILE *file = fopen(temp_file, "r");
         if (!file) {
             perror("Error opening temporary file for reading");
             return;
         }
 
-        // Read the output line by line and print it with the ".*" prefix
         char line[INITIAL_INPUT_SIZE];
         while (fgets(line, sizeof(line), file) != NULL) {
             printf(".*%s", line);
         }
 
         fclose(file);
-        // Remove the temporary file after reading its content
         remove(temp_file);
     } else {
         printf("No previous command found.\n");
@@ -382,7 +382,8 @@ void execute_command(char** args, char* input_file, char* output_file) {
  * Process command function modification to handle multiple pipes and redirection
  */
 void process_commands(char* input) {
-    if (strcmp(input, "prev") != 0) {
+    int is_prev_command = (strcmp(input, "prev") == 0);
+    if (!is_prev_command) {
         save_last_command(input);
     }
     
@@ -457,6 +458,7 @@ void process_commands(char* input) {
         command = strtok(NULL, ";");
     }
 }
+
 
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
