@@ -1,4 +1,3 @@
-// importing important libraries
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,6 +130,8 @@ void command_prev(void) {
         char *copy_last_command = strdup(last_command);
         process_commands(copy_last_command);
         free(copy_last_command);
+    } else {
+        printf("No previous command found.\n");
     }
 }
 
