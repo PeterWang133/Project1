@@ -128,7 +128,11 @@ void command_prev(void) {
     if (last_command) {
         first_command = 0;  // Prevent welcome message
         char *copy_last_command = strdup(last_command);
+
+        // Save the last command before processing to ensure "prev" works consecutively
+        save_last_command(copy_last_command);
         process_commands(copy_last_command);
+
         free(copy_last_command);
     } else {
         printf("No previous command found.\n");
