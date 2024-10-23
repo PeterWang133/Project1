@@ -22,6 +22,7 @@ void command_cd(char **args);
 void command_source(char *filename);
 void command_prev(void);
 void save_last_command(char *input);
+void cleanup_last_command(void);
 char** allocate_tokens(int size);
 char** resize_tokens(char** tokens, int *size);
 
@@ -117,25 +118,63 @@ char** tokenize(char* input) {
  * Saves the last executed command
  */
 void save_last_command(char *input) {
-    if (last_command) free(last_command);
-    last_command = strdup(input);
+    // Check if the input is valid and non-empty
+    if (input && strlen(input) > 0) {
+        // Free the existing last_command if it exists
+        if (last_command != NULL) {
+            free(last_command);
+        }
+
+        // Duplicate the input and assign it to last_command
+        last_command = strdup(input);
+
+        // Ensure memory allocation succeeded
+        if (last_command == NULL) {
+            fprintf(stderr, "Error: Memory allocation failed while saving the command.\n");
+            exit(EXIT_FAILURE);
+        }
+    }
 }
 
 /**
  * Executes the previous command
  */
 void command_prev(void) {
-    if (last_command) {
-        first_command = 0;  // Prevent welcome message
-        char *copy_last_command = strdup(last_command);
+    // Check if a previous command exists
+    if (last_command && strlen(last_command) > 0) {
+        // Prevent recursion or overwriting during a 'prev' call
+        if (strcmp(last_command, "prev") == 0) {
+            printf("Cannot repeat the 'prev' command consecutively.\n");
+            return;
+        }
 
-        // Save the last command before processing to ensure "prev" works consecutively
-        save_last_command(copy_last_command);
-        process_commands(copy_last_command);
+        // Make a copy of the last command for safe execution
+        char *command_copy = strdup(last_command);
 
-        free(copy_last_command);
+        // Ensure memory allocation succeeded
+        if (command_copy == NULL) {
+            fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
+            exit(EXIT_FAILURE);
+        }
+
+        // Process the copied command
+        process_commands(command_copy);
+
+        // Free the copied command after it has been processed
+        free(command_copy);
     } else {
         printf("No previous command found.\n");
+    }
+}
+
+/**
+ * Frees the memory allocated for the last_command variable before exiting the shell.
+ * This function should be called when the shell exits to clean up resources.
+ */
+void cleanup_last_command(void) {
+    if (last_command != NULL) {
+        free(last_command);
+        last_command = NULL;
     }
 }
 
@@ -290,7 +329,10 @@ void execute_command(char** args, char* input_file, char* output_file) {
  * Process command function modification to handle multiple pipes
  */
 void process_commands(char* input) {
-    save_last_command(input);
+    
+    if (strcmp(input, "prev") != 0) {
+        save_last_command(input);
+    }
     
     char* command = strtok(input, ";");
     while (command != NULL) {
@@ -395,6 +437,7 @@ int main(int argc, char **argv) {
         process_commands(input);
     }
 
-    if (last_command) free(last_command);
+    cleanup_last_command();
+
     return 0;
 }
