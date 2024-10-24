@@ -10,7 +10,6 @@
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
 char *last_command = NULL;
-int first_command = 1;  // Flag to track first command
 int in_prev_command = 0;  // Flag to prevent prev recursion
 
 // Forward declarations
@@ -44,7 +43,6 @@ char** resize_tokens(char** tokens, int *size) {
 
 /**
  * Tokenizes input string into array of strings
- * Handles quotes, spaces, and special characters
  */
 char** tokenize(char* input) {
     int token_size = INITIAL_TOKEN_SIZE;
@@ -57,7 +55,7 @@ char** tokenize(char* input) {
     
     for (int i = 0; input[i] != '\0'; i++) {
         char c = input[i];
-      
+        
         if (c == '"') {
             in_quotes = !in_quotes;
             continue;
@@ -111,7 +109,7 @@ char** tokenize(char* input) {
         }
     }
     
-    tokens[token_count] = NULL; 
+    tokens[token_count] = NULL;
     return tokens;
 }
 
@@ -120,14 +118,8 @@ char** tokenize(char* input) {
  */
 void save_last_command(char *input) {
     if (input && strlen(input) > 0 && !in_prev_command) {
-        if (last_command != NULL) {
-            free(last_command);
-        }
+        cleanup_last_command();
         last_command = strdup(input);
-        if (last_command == NULL) {
-            fprintf(stderr, "Error: Memory allocation failed while saving the command.\n");
-            exit(EXIT_FAILURE);
-        }
     }
 }
 
@@ -141,9 +133,9 @@ void command_prev(void) {
             fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
             exit(EXIT_FAILURE);
         }
-        in_prev_command = 1;  // Set flag before processing
+        in_prev_command = 1;
         process_commands(command_copy);
-        in_prev_command = 0;  // Reset flag after processing
+        in_prev_command = 0;
         free(command_copy);
     } else {
         printf("No previous command found.\n");
@@ -201,7 +193,6 @@ void command_source(char *filename) {
     char line[INITIAL_INPUT_SIZE];
     while (fgets(line, sizeof(line), file)) {
         line[strcspn(line, "\n")] = 0;
-        first_command = 0;
         process_commands(line);
     }
     fclose(file);
@@ -212,6 +203,7 @@ void command_source(char *filename) {
  */
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
     int pipes[num_commands - 1][2];
+    pid_t pids[num_commands];
     
     // Create all necessary pipes
     for (int i = 0; i < num_commands - 1; i++) {
@@ -222,13 +214,13 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
     }
 
     for (int i = 0; i < num_commands; i++) {
-        pid_t pid = fork();
-        if (pid == -1) {
+        pids[i] = fork();
+        if (pids[i] == -1) {
             perror("fork failed");
             exit(1);
         }
         
-        if (pid == 0) {  // Child process
+        if (pids[i] == 0) {  // Child process
             // Handle input redirection for first command
             if (i == 0 && input_file) {
                 int fd = open(input_file, O_RDONLY);
@@ -279,7 +271,7 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
     
     // Wait for all children
     for (int i = 0; i < num_commands; i++) {
-        wait(NULL);
+        waitpid(pids[i], NULL, 0);
     }
 }
 
@@ -327,7 +319,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
  * Process and execute commands
  */
 void process_commands(char* input) {
-    if (!in_prev_command && strcmp(input, "prev") != 0) {
+    if (!in_prev_command) {
         save_last_command(input);
     }
     
@@ -364,7 +356,13 @@ void process_commands(char* input) {
             char* pipe_command = strtok(command, "|");
             int index = 0;
 
-            while (pipe_command != NULL) {
+            while (pipe_command != NULL && index <= num_pipes) {
+                // Trim whitespace
+                while (isspace(*pipe_command)) pipe_command++;
+                char* end = pipe_command + strlen(pipe_command) - 1;
+                while (end > pipe_command && isspace(*end)) end--;
+                *(end + 1) = '\0';
+                
                 pipe_commands[index++] = tokenize(pipe_command);
                 pipe_command = strtok(NULL, "|");
             }
@@ -417,11 +415,9 @@ int main(int argc, char **argv) {
         }
 
         input[strcspn(input, "\n")] = 0;
-        first_command = 0;
         process_commands(input);
     }
 
     cleanup_last_command();
     return 0;
-   
-}//d
+}
