@@ -11,6 +11,7 @@
 #define INITIAL_INPUT_SIZE 256
 char *last_command = NULL;
 int first_command = 1;  // Flag to track first command
+int in_prev_command = 0;  // Flag to prevent prev recursion
 
 // Forward declarations
 void process_commands(char* input);
@@ -118,7 +119,7 @@ char** tokenize(char* input) {
  * Saves the last executed command
  */
 void save_last_command(char *input) {
-    if (input && strlen(input) > 0) {
+    if (input && strlen(input) > 0 && !in_prev_command) {
         if (last_command != NULL) {
             free(last_command);
         }
@@ -140,7 +141,9 @@ void command_prev(void) {
             fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
             exit(EXIT_FAILURE);
         }
+        in_prev_command = 1;  // Set flag before processing
         process_commands(command_copy);
+        in_prev_command = 0;  // Reset flag after processing
         free(command_copy);
     } else {
         printf("No previous command found.\n");
@@ -148,7 +151,7 @@ void command_prev(void) {
 }
 
 /**
- * Frees the memory allocated for the last_command variable before exiting the shell.
+ * Frees the memory allocated for the last_command variable
  */
 void cleanup_last_command(void) {
     if (last_command != NULL) {
@@ -205,88 +208,83 @@ void command_source(char *filename) {
 }
 
 /**
- * Executes multiple commands connected by pipes with proper input and output redirection.
+ * Executes a piped command sequence
  */
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
-    int pipe_fds[2];
-    int input_fd = STDIN_FILENO; // Initial input is standard input
-
-    // Handle input redirection if input_file is specified
-    if (input_file) {
-        input_fd = open(input_file, O_RDONLY);
-        if (input_fd < 0) {
-            perror("Cannot open input file");
+    int pipes[num_commands - 1][2];
+    
+    // Create all necessary pipes
+    for (int i = 0; i < num_commands - 1; i++) {
+        if (pipe(pipes[i]) == -1) {
+            perror("pipe failed");
             exit(1);
         }
     }
 
     for (int i = 0; i < num_commands; i++) {
-        if (i < num_commands - 1) {
-            if (pipe(pipe_fds) == -1) {
-                perror("pipe failed");
-                exit(1);
-            }
-        }
-
         pid_t pid = fork();
         if (pid == -1) {
             perror("fork failed");
             exit(1);
-        } else if (pid == 0) {
-            // Redirect input from previous command or file
-            if (input_fd != STDIN_FILENO) {
-                dup2(input_fd, STDIN_FILENO);
-                close(input_fd);
-            }
-
-            // Redirect output to next command or file
-            if (i < num_commands - 1) {
-                close(pipe_fds[0]);
-                dup2(pipe_fds[1], STDOUT_FILENO);
-                close(pipe_fds[1]);
-            } else if (output_file) {
-                int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-                if (fd_out < 0) {
-                    perror("Cannot open output file");
+        }
+        
+        if (pid == 0) {  // Child process
+            // Handle input redirection for first command
+            if (i == 0 && input_file) {
+                int fd = open(input_file, O_RDONLY);
+                if (fd == -1) {
+                    perror("open input failed");
                     exit(1);
                 }
-                dup2(fd_out, STDOUT_FILENO);
-                close(fd_out);
+                dup2(fd, STDIN_FILENO);
+                close(fd);
             }
-
-            // Execute the command
-            if (execvp(commands[i][0], commands[i]) == -1) {
-                perror("command execution failed");
-                exit(1);
+            
+            // Handle output redirection for last command
+            if (i == num_commands - 1 && output_file) {
+                int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+                if (fd == -1) {
+                    perror("open output failed");
+                    exit(1);
+                }
+                dup2(fd, STDOUT_FILENO);
+                close(fd);
             }
-        }
-
-        // Close input_fd as it's now duplicated in the child process
-        if (input_fd != STDIN_FILENO) {
-            close(input_fd);
-        }
-
-        // Update input_fd for the next command
-        if (i < num_commands - 1) {
-            close(pipe_fds[1]);
-            input_fd = pipe_fds[0];
+            
+            // Connect pipes
+            if (i > 0) {  // Not first command
+                dup2(pipes[i-1][0], STDIN_FILENO);
+            }
+            if (i < num_commands - 1) {  // Not last command
+                dup2(pipes[i][1], STDOUT_FILENO);
+            }
+            
+            // Close all pipe fds
+            for (int j = 0; j < num_commands - 1; j++) {
+                close(pipes[j][0]);
+                close(pipes[j][1]);
+            }
+            
+            execvp(commands[i][0], commands[i]);
+            perror("execvp failed");
+            exit(1);
         }
     }
-
-    // Close the last input_fd if it's not stdin
-    if (input_fd != STDIN_FILENO) {
-        close(input_fd);
+    
+    // Parent closes all pipe fds
+    for (int i = 0; i < num_commands - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
     }
-
+    
     // Wait for all children
     for (int i = 0; i < num_commands; i++) {
         wait(NULL);
     }
 }
 
-
 /**
- * Executes a single command with optional I/O redirection
+ * Executes a single command with I/O redirection
  */
 void execute_command(char** args, char* input_file, char* output_file) {
     pid_t pid = fork();
@@ -326,10 +324,10 @@ void execute_command(char** args, char* input_file, char* output_file) {
 }
 
 /**
- * Process command function modification to handle multiple pipes and redirection
+ * Process and execute commands
  */
 void process_commands(char* input) {
-    if (strcmp(input, "prev") != 0) {
+    if (!in_prev_command && strcmp(input, "prev") != 0) {
         save_last_command(input);
     }
     
