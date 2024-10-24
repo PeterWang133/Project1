@@ -6,11 +6,14 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
-// Initializing global variables
+// Constants
 #define INITIAL_TOKEN_SIZE 64
 #define INITIAL_INPUT_SIZE 256
+#define MAX_PATH_LENGTH 4096
+
+// Global variables
 char *last_command = NULL;
-int in_prev_command = 0;  // Flag to prevent prev recursion
+int in_prev_command = 0;
 
 // Forward declarations
 void process_commands(char* input);
@@ -30,7 +33,12 @@ char** resize_tokens(char** tokens, int *size);
  * Allocates memory for token array
  */
 char** allocate_tokens(int size) {
-    return (char **)malloc(size * sizeof(char *));
+    char** tokens = (char **)malloc(size * sizeof(char *));
+    if (!tokens) {
+        perror("Memory allocation failed");
+        exit(EXIT_FAILURE);
+    }
+    return tokens;
 }
 
 /**
@@ -38,7 +46,13 @@ char** allocate_tokens(int size) {
  */
 char** resize_tokens(char** tokens, int *size) {
     *size *= 2;
-    return (char **)realloc(tokens, (*size) * sizeof(char *));
+    char** new_tokens = (char **)realloc(tokens, (*size) * sizeof(char *));
+    if (!new_tokens) {
+        perror("Memory reallocation failed");
+        free(tokens);
+        exit(EXIT_FAILURE);
+    }
+    return new_tokens;
 }
 
 /**
@@ -50,7 +64,7 @@ char** tokenize(char* input) {
     int token_count = 0;
     
     int in_quotes = 0;
-    char buffer[INITIAL_INPUT_SIZE];
+    char buffer[INITIAL_INPUT_SIZE] = {0};
     int buffer_index = 0;
     
     for (int i = 0; input[i] != '\0'; i++) {
@@ -72,15 +86,17 @@ char** tokenize(char* input) {
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
                 
-                if (token_count >= token_size) {
+                if (token_count >= token_size - 1) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
             }
-            char special_token[2] = {c, '\0'};
-            tokens[token_count++] = strdup(special_token);
-            
-            if (token_count >= token_size) {
-                tokens = resize_tokens(tokens, &token_size);
+            if (!isspace(c)) {
+                char special_token[2] = {c, '\0'};
+                tokens[token_count++] = strdup(special_token);
+                
+                if (token_count >= token_size - 1) {
+                    tokens = resize_tokens(tokens, &token_size);
+                }
             }
             continue;
         }
@@ -91,7 +107,7 @@ char** tokenize(char* input) {
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
                 
-                if (token_count >= token_size) {
+                if (token_count >= token_size - 1) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
             }
@@ -104,9 +120,6 @@ char** tokenize(char* input) {
     if (buffer_index > 0) {
         buffer[buffer_index] = '\0';
         tokens[token_count++] = strdup(buffer);
-        if (token_count >= token_size) {
-            tokens = resize_tokens(tokens, &token_size);
-        }
     }
     
     tokens[token_count] = NULL;
@@ -128,9 +141,10 @@ void save_last_command(char *input) {
  */
 void command_prev(void) {
     if (last_command && strlen(last_command) > 0) {
+        printf("%s\n", last_command);  // Echo the command being executed
         char *command_copy = strdup(last_command);
-        if (command_copy == NULL) {
-            fprintf(stderr, "Error: Memory allocation failed while copying the command.\n");
+        if (!command_copy) {
+            perror("Memory allocation failed");
             exit(EXIT_FAILURE);
         }
         in_prev_command = 1;
@@ -146,10 +160,8 @@ void command_prev(void) {
  * Frees the memory allocated for the last_command variable
  */
 void cleanup_last_command(void) {
-    if (last_command != NULL) {
-        free(last_command);
-        last_command = NULL;
-    }
+    free(last_command);
+    last_command = NULL;
 }
 
 /**
@@ -158,7 +170,7 @@ void cleanup_last_command(void) {
 void command_help(void) {
     printf("Available built-in commands:\n");
     printf("cd [path] - Change directory\n");
-    printf("source [filename] - Execute script\n");
+    printf("source [filename] - Execute commands from file\n");
     printf("prev - Repeat previous command\n");
     printf("help - Show this help message\n");
     printf("exit - Exit the shell\n");
@@ -168,12 +180,13 @@ void command_help(void) {
  * Changes current directory
  */
 void command_cd(char **args) {
-    if (args[1] == NULL) {
-        chdir(getenv("HOME"));
-    } else {
-        if (chdir(args[1]) != 0) {
-            fprintf(stderr, "cd: No such file or directory: %s\n", args[1]);
-        }
+    char *path = args[1];
+    if (!path) {
+        path = getenv("HOME");
+    }
+    
+    if (chdir(path) != 0) {
+        perror("cd failed");
     }
 }
 
@@ -185,16 +198,24 @@ void command_source(char *filename) {
         fprintf(stderr, "source: Missing filename\n");
         return;
     }
+    
     FILE *file = fopen(filename, "r");
     if (!file) {
-        fprintf(stderr, "source: No such file: %s\n", filename);
+        perror("source failed");
         return;
     }
+    
     char line[INITIAL_INPUT_SIZE];
     while (fgets(line, sizeof(line), file)) {
-        line[strcspn(line, "\n")] = 0;
-        process_commands(line);
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[len-1] = '\0';
+        }
+        if (strlen(line) > 0) {
+            process_commands(line);
+        }
     }
+    
     fclose(file);
 }
 
@@ -205,19 +226,21 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
     int pipes[num_commands - 1][2];
     pid_t pids[num_commands];
     
-    // Create all necessary pipes
+    // Create pipes
     for (int i = 0; i < num_commands - 1; i++) {
         if (pipe(pipes[i]) == -1) {
             perror("pipe failed");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
     }
-
+    
+    // Execute commands
     for (int i = 0; i < num_commands; i++) {
         pids[i] = fork();
+        
         if (pids[i] == -1) {
             perror("fork failed");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
         
         if (pids[i] == 0) {  // Child process
@@ -226,9 +249,12 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
                 int fd = open(input_file, O_RDONLY);
                 if (fd == -1) {
                     perror("open input failed");
-                    exit(1);
+                    exit(EXIT_FAILURE);
                 }
-                dup2(fd, STDIN_FILENO);
+                if (dup2(fd, STDIN_FILENO) == -1) {
+                    perror("dup2 input failed");
+                    exit(EXIT_FAILURE);
+                }
                 close(fd);
             }
             
@@ -237,18 +263,27 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
                 int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
                 if (fd == -1) {
                     perror("open output failed");
-                    exit(1);
+                    exit(EXIT_FAILURE);
                 }
-                dup2(fd, STDOUT_FILENO);
+                if (dup2(fd, STDOUT_FILENO) == -1) {
+                    perror("dup2 output failed");
+                    exit(EXIT_FAILURE);
+                }
                 close(fd);
             }
             
             // Connect pipes
             if (i > 0) {  // Not first command
-                dup2(pipes[i-1][0], STDIN_FILENO);
+                if (dup2(pipes[i-1][0], STDIN_FILENO) == -1) {
+                    perror("dup2 pipe input failed");
+                    exit(EXIT_FAILURE);
+                }
             }
             if (i < num_commands - 1) {  // Not last command
-                dup2(pipes[i][1], STDOUT_FILENO);
+                if (dup2(pipes[i][1], STDOUT_FILENO) == -1) {
+                    perror("dup2 pipe output failed");
+                    exit(EXIT_FAILURE);
+                }
             }
             
             // Close all pipe fds
@@ -259,7 +294,7 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
             
             execvp(commands[i][0], commands[i]);
             perror("execvp failed");
-            exit(1);
+            exit(EXIT_FAILURE);
         }
     }
     
@@ -271,7 +306,8 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
     
     // Wait for all children
     for (int i = 0; i < num_commands; i++) {
-        waitpid(pids[i], NULL, 0);
+        int status;
+        waitpid(pids[i], &status, 0);
     }
 }
 
@@ -280,103 +316,137 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
  */
 void execute_command(char** args, char* input_file, char* output_file) {
     pid_t pid = fork();
-
-    if (pid < 0) {
-        perror("Fork Failed");
-        exit(1);
-    } 
-    else if (pid == 0) {
-        if (input_file) {
-            int fd_in = open(input_file, O_RDONLY);
-            if (fd_in < 0) {
-                fprintf(stderr, "Cannot open file: %s\n", input_file);
-                exit(1);
-            }
-            dup2(fd_in, STDIN_FILENO);
-            close(fd_in);
-        }
-
-        if (output_file) {
-            int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-            if (fd_out < 0) {
-                fprintf(stderr, "Cannot open file: %s\n", output_file);
-                exit(1);
-            }
-            dup2(fd_out, STDOUT_FILENO);
-            close(fd_out);
-        }
-
-        if (execvp(args[0], args) == -1) {
-            fprintf(stderr, "%s: command not found\n", args[0]);
-            exit(1);
-        }
-    } else {
-        waitpid(pid, NULL, 0);
+    
+    if (pid == -1) {
+        perror("fork failed");
+        exit(EXIT_FAILURE);
     }
+    
+    if (pid == 0) {  // Child process
+        // Handle input redirection
+        if (input_file) {
+            int fd = open(input_file, O_RDONLY);
+            if (fd == -1) {
+                perror("open input failed");
+                exit(EXIT_FAILURE);
+            }
+            if (dup2(fd, STDIN_FILENO) == -1) {
+                perror("dup2 input failed");
+                exit(EXIT_FAILURE);
+            }
+            close(fd);
+        }
+        
+        // Handle output redirection
+        if (output_file) {
+            int fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (fd == -1) {
+                perror("open output failed");
+                exit(EXIT_FAILURE);
+            }
+            if (dup2(fd, STDOUT_FILENO) == -1) {
+                perror("dup2 output failed");
+                exit(EXIT_FAILURE);
+            }
+            close(fd);
+        }
+        
+        execvp(args[0], args);
+        perror("execvp failed");
+        exit(EXIT_FAILURE);
+    }
+    
+    // Parent waits for child
+    int status;
+    waitpid(pid, &status, 0);
 }
 
 /**
  * Process and execute commands
  */
 void process_commands(char* input) {
+    if (!input || strlen(input) == 0) return;
+    
+    // Save command history if not in prev command
     if (!in_prev_command) {
         save_last_command(input);
     }
     
-    char* command = strtok(input, ";");
-    while (command != NULL) {
+    char* saveptr1;
+    char* command = strtok_r(input, ";", &saveptr1);
+    
+    while (command) {
+        // Trim whitespace
         while (isspace(*command)) command++;
         char* end = command + strlen(command) - 1;
         while (end > command && isspace(*end)) end--;
         *(end + 1) = '\0';
-
+        
+        if (strlen(command) == 0) {
+            command = strtok_r(NULL, ";", &saveptr1);
+            continue;
+        }
+        
         char *input_file = NULL, *output_file = NULL;
-        char *input_redirect_pos = strchr(command, '<');
-        char *output_redirect_pos = strchr(command, '>');
-
+        char *input_redirect_pos = strstr(command, "<");
+        char *output_redirect_pos = strstr(command, ">");
+        
+        // Handle input redirection
         if (input_redirect_pos) {
             *input_redirect_pos = '\0';
-            input_file = strtok(input_redirect_pos + 1, " \t");
+            input_redirect_pos++;
+            while (isspace(*input_redirect_pos)) input_redirect_pos++;
+            char* end = input_redirect_pos;
+            while (*end && !isspace(*end) && *end != '>' && *end != '<' && *end != '|') end++;
+            *end = '\0';
+            input_file = input_redirect_pos;
         }
-
+        
+        // Handle output redirection
         if (output_redirect_pos) {
             *output_redirect_pos = '\0';
-            output_file = strtok(output_redirect_pos + 1, " \t");
+            output_redirect_pos++;
+            while (isspace(*output_redirect_pos)) output_redirect_pos++;
+            char* end = output_redirect_pos;
+            while (*end && !isspace(*end) && *end != '>' && *end != '<' && *end != '|') end++;
+            *end = '\0';
+            output_file = output_redirect_pos;
         }
-
+        
+        // Count pipes
         int num_pipes = 0;
-        char* temp = command;
-        while ((temp = strchr(temp, '|')) != NULL) {
-            num_pipes++;
-            temp++;
+        for (char* p = command; *p; p++) {
+            if (*p == '|') num_pipes++;
         }
-
+        
         if (num_pipes > 0) {
+            // Handle piped commands
             char** pipe_commands[num_pipes + 1];
-            char* pipe_command = strtok(command, "|");
+            char* saveptr2;
+            char* pipe_command = strtok_r(command, "|", &saveptr2);
             int index = 0;
-
-            while (pipe_command != NULL && index <= num_pipes) {
-                // Trim whitespace
+            
+            while (pipe_command && index <= num_pipes) {
                 while (isspace(*pipe_command)) pipe_command++;
                 char* end = pipe_command + strlen(pipe_command) - 1;
                 while (end > pipe_command && isspace(*end)) end--;
                 *(end + 1) = '\0';
                 
                 pipe_commands[index++] = tokenize(pipe_command);
-                pipe_command = strtok(NULL, "|");
+                pipe_command = strtok_r(NULL, "|", &saveptr2);
             }
-
+            
             execute_pipe(pipe_commands, num_pipes + 1, input_file, output_file);
-
+            
+            // Cleanup
             for (int i = 0; i < num_pipes + 1; i++) {
-                char** args = pipe_commands[i];
-                for (int j = 0; args[j] != NULL; j++) {
-                    free(args[j]);
+                for (char** arg = pipe_commands[i]; *arg; arg++) {
+                    free(*arg);
                 }
-                free(args);
+                free(pipe_commands[i]);
             }
         } else {
+
             char** args = tokenize(command);
 
             if (args[0] != NULL) {
