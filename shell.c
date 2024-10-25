@@ -6,13 +6,15 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 
-// Initializing global variables
-#define INITIAL_TOKEN_SIZE 64
-#define INITIAL_INPUT_SIZE 256
-char *last_command = NULL;
-int first_command = 1;  // Flag to track first command
+// Global constants
+#define INITIAL_TOKEN_SIZE 64    // Initial size of token array
+#define INITIAL_INPUT_SIZE 256   // Initial size for input buffer
 
-// Forward declarations
+// Global variables
+char *last_command = NULL;       // Stores the last executed command
+int first_command = 1;           // Flag to track if the first command is being executed
+
+// Function declarations
 void process_commands(char* input);
 char** tokenize(char* input);
 void execute_command(char** args, char* input_file, char* output_file);
@@ -27,14 +29,19 @@ char** allocate_tokens(int size);
 char** resize_tokens(char** tokens, int *size);
 
 /**
- * Allocates memory for token array
+ * Allocates memory for a token array
+ * @param size - Initial size of the token array
+ * @return Pointer to the allocated token array
  */
 char** allocate_tokens(int size) {
     return (char **)malloc(size * sizeof(char *));
 }
 
 /**
- * Resizes token array when needed
+ * Resizes the token array when the size limit is reached
+ * @param tokens - Existing token array
+ * @param size - Pointer to the current size of the array
+ * @return Resized token array or NULL on failure
  */
 char** resize_tokens(char** tokens, int *size) {
     *size *= 2;
@@ -42,66 +49,73 @@ char** resize_tokens(char** tokens, int *size) {
 }
 
 /**
- * Tokenizes input string into array of strings
- * Handles quotes, spaces, and special characters
+ * Tokenizes an input string into an array of tokens
+ * Handles quotes, spaces, and special shell characters
+ * @param input - Command input string to be tokenized
+ * @return Array of tokenized strings or NULL on failure
  */
 char** tokenize(char* input) {
     int token_size = INITIAL_TOKEN_SIZE;
     char** tokens = allocate_tokens(token_size);
     int token_count = 0;
-    
+
     int in_quotes = 0;
     char buffer[INITIAL_INPUT_SIZE];
     int buffer_index = 0;
-    
+
     for (int i = 0; input[i] != '\0'; i++) {
         char c = input[i];
-      
+
+        // Handles quoted strings
         if (c == '"') {
             in_quotes = !in_quotes;
             continue;
         }
-        
+
         if (in_quotes) {
             buffer[buffer_index++] = c;
             continue;
         }
-        
+
+        // Detect special characters like (), <>, |, and ;
         if (strchr("()<>|;", c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
-                
+
                 if (token_count >= token_size) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
             }
             char special_token[2] = {c, '\0'};
             tokens[token_count++] = strdup(special_token);
-            
+
             if (token_count >= token_size) {
                 tokens = resize_tokens(tokens, &token_size);
             }
             continue;
         }
-        
+
+        // Handles spaces as token separators
         if (isspace(c)) {
             if (buffer_index > 0) {
                 buffer[buffer_index] = '\0';
                 tokens[token_count++] = strdup(buffer);
                 buffer_index = 0;
-                
+
                 if (token_count >= token_size) {
                     tokens = resize_tokens(tokens, &token_size);
                 }
             }
             continue;
         }
-        
+
+        // Adds regular characters to the buffer
         buffer[buffer_index++] = c;
     }
-    
+
+    // Adds the last token if any remains in the buffer
     if (buffer_index > 0) {
         buffer[buffer_index] = '\0';
         tokens[token_count++] = strdup(buffer);
@@ -109,13 +123,14 @@ char** tokenize(char* input) {
             tokens = resize_tokens(tokens, &token_size);
         }
     }
-    
+
     tokens[token_count] = NULL; 
     return tokens;
 }
 
 /**
- * Saves the last executed command
+ * Saves the last executed command for repeat functionality
+ * @param input - The command string to be saved
  */
 void save_last_command(char *input) {
     if (input && strlen(input) > 0) {
@@ -131,7 +146,7 @@ void save_last_command(char *input) {
 }
 
 /**
- * Executes the previous command
+ * Executes the previously saved command if available
  */
 void command_prev(void) {
     if (last_command && strlen(last_command) > 0) {
@@ -148,7 +163,8 @@ void command_prev(void) {
 }
 
 /**
- * Frees the memory allocated for the last_command variable before exiting the shell.
+ * Frees the memory allocated for the last_command variable
+ * to avoid memory leaks
  */
 void cleanup_last_command(void) {
     if (last_command != NULL) {
@@ -158,7 +174,7 @@ void cleanup_last_command(void) {
 }
 
 /**
- * Displays help information
+ * Displays help information for built-in commands
  */
 void command_help(void) {
     printf("Available built-in commands:\n");
@@ -170,7 +186,8 @@ void command_help(void) {
 }
 
 /**
- * Changes current directory
+ * Changes the current working directory
+ * @param args - Array of arguments including the target directory
  */
 void command_cd(char **args) {
     if (args[1] == NULL) {
@@ -183,7 +200,8 @@ void command_cd(char **args) {
 }
 
 /**
- * Executes commands from a file
+ * Executes commands from a file line by line
+ * @param filename - Name of the file containing commands
  */
 void command_source(char *filename) {
     if (!filename) {
@@ -205,13 +223,17 @@ void command_source(char *filename) {
 }
 
 /**
- * Executes multiple commands connected by pipes with proper input and output redirection.
+ * Executes multiple commands connected by pipes with optional I/O redirection
+ * @param commands - Array of command arrays
+ * @param num_commands - Number of commands in the pipeline
+ * @param input_file - File for input redirection (optional)
+ * @param output_file - File for output redirection (optional)
  */
 void execute_pipe(char*** commands, int num_commands, char* input_file, char* output_file) {
+    int input_fd = STDIN_FILENO;
     int pipe_fds[2];
-    int input_fd = STDIN_FILENO; // Initial input is standard input
+    pid_t pids[num_commands];
 
-    // Handle input redirection if input_file is specified
     if (input_file) {
         input_fd = open(input_file, O_RDONLY);
         if (input_fd < 0) {
@@ -233,13 +255,12 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
             perror("fork failed");
             exit(1);
         } else if (pid == 0) {
-            // Redirect input from previous command or file
+            // Child process logic for piping and redirection
             if (input_fd != STDIN_FILENO) {
                 dup2(input_fd, STDIN_FILENO);
                 close(input_fd);
             }
 
-            // Redirect output to next command or file
             if (i < num_commands - 1) {
                 close(pipe_fds[0]);
                 dup2(pipe_fds[1], STDOUT_FILENO);
@@ -254,52 +275,50 @@ void execute_pipe(char*** commands, int num_commands, char* input_file, char* ou
                 close(fd_out);
             }
 
-            // Execute the command
             if (execvp(commands[i][0], commands[i]) == -1) {
                 perror("command execution failed");
                 exit(1);
             }
         }
 
-        // Close input_fd as it's now duplicated in the child process
+        // Parent process: manages file descriptors
+        pids[i] = pid;
         if (input_fd != STDIN_FILENO) {
             close(input_fd);
         }
-
-        // Update input_fd for the next command
         if (i < num_commands - 1) {
             close(pipe_fds[1]);
             input_fd = pipe_fds[0];
         }
     }
 
-    // Close the last input_fd if it's not stdin
     if (input_fd != STDIN_FILENO) {
         close(input_fd);
     }
 
-    // Wait for all children
+       // Wait for all child processes to complete
     for (int i = 0; i < num_commands; i++) {
-        wait(NULL);
+        waitpid(pids[i], NULL, 0);
     }
 }
 
-
 /**
  * Executes a single command with optional I/O redirection
+ * @param args - Array containing command and its arguments
+ * @param input_file - Input file for redirection (optional)
+ * @param output_file - Output file for redirection (optional)
  */
 void execute_command(char** args, char* input_file, char* output_file) {
     pid_t pid = fork();
-
     if (pid < 0) {
         perror("Fork Failed");
         exit(1);
-    } 
-    else if (pid == 0) {
+    } else if (pid == 0) {
+        // In the child process
         if (input_file) {
             int fd_in = open(input_file, O_RDONLY);
             if (fd_in < 0) {
-                fprintf(stderr, "Cannot open file: %s\n", input_file);
+                perror("Cannot open input file");
                 exit(1);
             }
             dup2(fd_in, STDIN_FILENO);
@@ -309,7 +328,7 @@ void execute_command(char** args, char* input_file, char* output_file) {
         if (output_file) {
             int fd_out = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
             if (fd_out < 0) {
-                fprintf(stderr, "Cannot open file: %s\n", output_file);
+                perror("Cannot open output file");
                 exit(1);
             }
             dup2(fd_out, STDOUT_FILENO);
@@ -317,22 +336,25 @@ void execute_command(char** args, char* input_file, char* output_file) {
         }
 
         if (execvp(args[0], args) == -1) {
-            fprintf(stderr, "%s: command not found\n", args[0]);
+            perror("command execution failed");
             exit(1);
         }
     } else {
+        // In the parent process, wait for the child to finish
         waitpid(pid, NULL, 0);
     }
 }
 
 /**
- * Process command function modification to handle multiple pipes and redirection
+ * Processes and executes commands based on user input
+ * Handles multiple commands separated by pipes and supports redirection
+ * @param input - The command input string to process
  */
 void process_commands(char* input) {
     if (strcmp(input, "prev") != 0) {
         save_last_command(input);
     }
-    
+
     char* command = strtok(input, ";");
     while (command != NULL) {
         while (isspace(*command)) command++;
@@ -362,7 +384,12 @@ void process_commands(char* input) {
         }
 
         if (num_pipes > 0) {
-            char** pipe_commands[num_pipes + 1];
+            char*** pipe_commands = malloc((num_pipes + 1) * sizeof(char**));
+            if (!pipe_commands) {
+                perror("malloc failed");
+                exit(EXIT_FAILURE);
+            }
+
             char* pipe_command = strtok(command, "|");
             int index = 0;
 
@@ -373,14 +400,19 @@ void process_commands(char* input) {
 
             execute_pipe(pipe_commands, num_pipes + 1, input_file, output_file);
 
+            // Freeing memory allocated for pipe commands
             for (int i = 0; i < num_pipes + 1; i++) {
                 char** args = pipe_commands[i];
-                for (int j = 0; args[j] != NULL; j++) {
-                    free(args[j]);
+                if (args) {
+                    for (int j = 0; args[j] != NULL; j++) {
+                        free(args[j]);
+                    }
+                    free(args);
                 }
-                free(args);
             }
+            free(pipe_commands);
         } else {
+            // Handle single command
             char** args = tokenize(command);
 
             if (args[0] != NULL) {
@@ -397,6 +429,7 @@ void process_commands(char* input) {
                 }
             }
 
+            // Free tokens after execution
             for (int i = 0; args[i] != NULL; i++) free(args[i]);
             free(args);
         }
@@ -405,6 +438,9 @@ void process_commands(char* input) {
     }
 }
 
+/**
+ * Main function: Initializes the shell and processes user input in a loop
+ */
 int main(int argc, char **argv) {
     char input[INITIAL_INPUT_SIZE];
     printf("Welcome to mini-shell\n");
@@ -418,6 +454,7 @@ int main(int argc, char **argv) {
             break;
         }
 
+        // Remove the newline character from input
         input[strcspn(input, "\n")] = 0;
         first_command = 0;
         process_commands(input);
@@ -426,3 +463,4 @@ int main(int argc, char **argv) {
     cleanup_last_command();
     return 0;
 }
+
