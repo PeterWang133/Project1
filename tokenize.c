@@ -228,4 +228,3 @@ int main() {
     free_tokenizer(t);
     return 0;
 }
-
